@@ -1,11 +1,17 @@
 # @verteramo
 
-import io, argparse, re, json
+import re, json
+
+from argparse import Namespace, ArgumentParser
+
 from selenium import webdriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 
 # Ordered answers extraction
 # Example: "a. Texto de la respuesta." -> "Texto de la respuesta."
@@ -26,7 +32,7 @@ class Question:
     def get_text(self) -> str:
         try:
             return self.__element.find_element(By.CLASS_NAME, "qtext").text.rstrip(":")
-        
+
         # GVA v3.9.12
         except NoSuchElementException:
             return self.__element.find_element(
@@ -55,7 +61,7 @@ class Question:
             return (
                 rightanswer_list[0] if len(rightanswer_list) == 1 else rightanswer_list
             )
-        
+
         # GVA v3.9.12
         except AttributeError:
             return None
@@ -174,7 +180,7 @@ class Question:
         rightanswer = self.__get_rightanswer()
         try:
             answer = self.__element.find_element(By.CLASS_NAME, "answer")
-        
+
         # GVA v3.9.12
         except NoSuchElementException:
             answer = self.__element.find_element(By.XPATH, "//*[@class='answer']")
@@ -200,7 +206,7 @@ class Test:
                 .find_element(By.TAG_NAME, "a")
                 .text.rstrip(".")
             )
-        
+
         # GVA v3.9.12
         except IndexError:
             return self.__driver.find_elements(
@@ -213,71 +219,91 @@ class Test:
 
 
 class Platform:
-    def __init__(self, driver: webdriver) -> None:
-        parser = argparse.ArgumentParser(description="Scraps tests")
-        parser.add_argument("-uid", "--username_id", type=str, default="username")
-        parser.add_argument("-pid", "--password_id", type=str, default="password")
-        parser.add_argument("-bid", "--loginbtn_id", type=str, default="loginbtn")
-        parser.add_argument("-l", "--links", type=str, default="links.txt")
-        parser.add_argument("-u", "--username", type=str)
-        parser.add_argument("-p", "--password", type=str)
-        self.__args = parser.parse_args()
+    def __init__(self, args: Namespace, driver: webdriver, connector) -> None:
+        self.__args = args
         self.__driver = driver
+        self.__connector = connector
 
     def __get_links(self) -> list[str]:
         with open(self.__args.links, "r") as links:
-            for link in links.readlines():
+            for link in links:
                 yield link
 
-    def __get_connections(self) -> list:
-        for link in self.__get_links():
-            self.__driver.get(link)
-            try:
-                self.__driver.find_element(By.ID, self.__args.username_id).send_keys(
-                    self.__args.username
-                )
-                self.__driver.find_element(By.ID, self.__args.password_id).send_keys(
-                    self.__args.password
-                )
-                self.__driver.find_element(By.ID, self.__args.loginbtn_id).click()
-            except:
-                pass
-
-            yield self.__driver
-
     def get_tests(self) -> list[Test]:
-        for connection in self.__get_connections():
+        for connection in self.__connector(
+            self.__driver, self.__args, self.__get_links
+        ):
             yield Test(connection)
 
 
-def get_driver() -> webdriver:
-    options = webdriver.ChromeOptions()
-    options.add_experimental_option("excludeSwitches", ["enable-logging"])
+def default_connector(driver: webdriver, args: Namespace, links) -> list:
+    for link in links():
+        driver.get(link)
+        try:
+            driver.find_element(By.ID, args.username_id).send_keys(args.username)
+            driver.find_element(By.ID, args.password_id).send_keys(args.password)
+            driver.find_element(By.ID, args.loginbtn_id).click()
+        except:
+            pass
+        yield driver
 
-    driver = webdriver.Edge(
-        service=Service("drivers/chromedriver.exe"), options=options
-    )
 
-    # driver.minimize_window()
+def agora_connector(driver: webdriver, args: Namespace, links) -> list:
+    for link in links():
+        driver.get(link)
+        driver.find_element(By.XPATH, "//a[@title='Acceder con cuenta UNED']").click()
+        try:
+            driver.find_element(
+                By.XPATH, "//input[contains(@id, 'username')]"
+            ).send_keys(args.username)
+            driver.find_element(
+                By.XPATH, "//input[contains(@id, 'password')]"
+            ).send_keys(args.password)
+            driver.find_element(
+                By.XPATH, "//div[contains(@class, 'visible')]/input[@type='submit']"
+            ).click()
+        except:
+            pass
 
-    return driver
+        yield driver
 
 
-def main():
+def main(args: Namespace, driver: webdriver):
     tests = dict()
-    for test in Platform(get_driver()).get_tests():
+    for test in Platform(args, driver, agora_connector).get_tests():
         questions = []
         for question in test.get_questions():
             questions.append((question.get_text(), question.get_answer()))
-
         try:
             tests[test.get_name()] += questions
         except KeyError:
             tests[test.get_name()] = questions
 
-    with open("test.json", "w") as file:
+    with open(args.output, "w") as file:
         json.dump(tests, file, indent=4)
 
 
+def get_driver() -> webdriver:
+    options = webdriver.ChromeOptions()
+    options.add_experimental_option("excludeSwitches", ["enable-logging"])
+    driver = webdriver.Edge(
+        service=Service("drivers/chromedriver.exe"), options=options
+    )
+    # driver.minimize_window()
+    return driver
+
+
+def get_args():
+    parser = ArgumentParser(description="Scraps tests")
+    parser.add_argument("-uid", "--username_id", type=str, default="username")
+    parser.add_argument("-pid", "--password_id", type=str, default="password")
+    parser.add_argument("-bid", "--loginbtn_id", type=str, default="loginbtn")
+    parser.add_argument("-l", "--links", type=str, default="links.txt")
+    parser.add_argument("-o", "--output", type=str, default="output.json")
+    parser.add_argument("-u", "--username", type=str)
+    parser.add_argument("-p", "--password", type=str)
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    main()
+    main(get_args(), get_driver())
