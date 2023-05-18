@@ -1,2 +1,5 @@
-/data
-/links
+.vscode
+data
+links
+*.txt
+*.json

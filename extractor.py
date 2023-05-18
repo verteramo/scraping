@@ -1,3 +1,6 @@
+# @verteramo
+# Extracts questions and answers from a pdf file
+
 import re
 from PyPDF2 import PdfReader
 

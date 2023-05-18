@@ -1,4 +1,5 @@
 # @verteramo
+# Scraps Moodle tests
 
 import re, json
 
@@ -270,7 +271,7 @@ def agora_connector(driver: webdriver, args: Namespace, links) -> list:
 
 def main(args: Namespace, driver: webdriver):
     tests = dict()
-    for test in Platform(args, driver, agora_connector).get_tests():
+    for test in Platform(args, driver, default_connector).get_tests():
         questions = []
         for question in test.get_questions():
             questions.append((question.get_text(), question.get_answer()))
